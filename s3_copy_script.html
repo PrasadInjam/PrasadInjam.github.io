@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Copy Files between AWS S3 buckets</title>
+    <style>
+        body {
+            font-family: monospace;
+            background-color: #f0f0f0;
+            padding: 20px;
+        }
+        pre {
+            background-color: #000;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+<body>
+    <h1>Copy Files between AWS S3 buckets</h1>
+    <pre>
+#!/bin/bash
+
+echo -e "\e[32m---------------COPY FILES BETWEEN S3 BUCKETS-----------------\e[0m"
+
+# Check if AWS credentials are configured
+aws sts get-caller-identity > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+  echo -e "\e[31mAWS credentials are not configured. Please configure your credentials:\e[0m"
+  aws configure
+else
+  echo -e "\e[32mAWS credentials are already configured.\e[0m"
+fi
+
+echo -e "\e[32m---------------Listing all buckets-----------------\e[0m"
+aws s3 ls
+
+read -p "Enter the source bucket name: " source_bucket
+read -p "Enter the destination bucket name: " destination_bucket
+
+# Copy files between the buckets
+aws s3 cp s3://$source_bucket/ s3://$destination_bucket/ --recursive
+
+if [ $? -eq 0 ]; then
+  echo -e "\e[32m---------------Files copied successfully-----------------\e[0m"
+else
+  echo -e "\e[31m---------------An error occurred while copying files-----------------\e[0m"
+fi
+    </pre>
+</body>
+</html>
