@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wiki Notes</title>
+</head>
+<body>
+    <h1>Wiki</h1>
+    
+    <h2>a. Create an EBS volume:</h2>
+    <pre><code class="language-bash">aws ec2 create-volume \
+    --volume-type gp3 \
+    --size 250 \
+    --availability-zone us-gov-west-1a</code></pre>
+
+    <h2>b. Attach the volume to your EC2 instance:</h2>
+    <pre><code class="language-bash">aws ec2 attach-volume \
+    --volume-id &lt;volume_id&gt; \
+    --instance-id &lt;instance_id&gt; \
+    --device /dev/sdd</code></pre>
+
+    <h2>c. Modify the instance attribute to set the DeleteOnTermination flag:</h2>
+    <pre><code class="language-bash">aws ec2 modify-instance-attribute \
+    --instance-id &lt;instance_id&gt; \
+    --block-device-mappings "[{\"DeviceName\": \"/dev/sdd\",\"Ebs\":{\"DeleteOnTermination\":true}}]"</code></pre>
+
+    <p><strong>Note:</strong> Make sure the device name is available. Replace volume_id and Instance_id from Step a.</p>
+
+    <h2>d. Connect to your EC2 instance via SSH and run the following commands:</h2>
+    <pre><code class="language-bash"># Install lvm2
+sudo yum install -y lvm2
+
+# Create partition
+#creates a new GUID Partition Table (GPT)
+sudo parted /dev/nvme5n1 mklabel gpt
+sudo parted -a optimal /dev/nvme5n1 mkpart primary 0% 100%
+sudo parted /dev/nvme5n1 set 1 lvm on
+
+# Create volume group
+sudo vgcreate oracleaux-vg /dev/nvme5n1p1
+# Create logical volume
+sudo lvcreate -l 100%FREE -n oracleaux-lv oracleaux-vg
+
+# Create directory
+sudo mkdir -p /oracleaux
+sudo chown oracle:oinstall /oracleaux
+sudo chmod 755 /oracleaux
+
+# Format filesystem
+sudo mkfs.xfs /dev/oracleaux-vg/oracleaux-lv
+
+# Mount the logical volume
+echo "/dev/oracleaux-vg/oracleaux-lv /oracleaux xfs defaults 0 0" | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload
+sudo mount -a
+
+# Create subdirectories and set permissions
+sudo mkdir -p /oracleaux/arch /oracleaux/diag /oracleaux/fra
+sudo chown -R oracle:oinstall /oracleaux/arch /oracleaux/diag /oracleaux/fra
+sudo chmod -R 755 /oracleaux/arch /oracleaux/diag</code></pre>
+
+    <h2>e. Add Custom Tags:</h2>
+    <pre><code class="language-bash">aws ec2 create-tags --resources vol-0b61bd1d4c028494d \
+    --tags Key=ProductLine,Value=BIA \
+           Key=Portfolio,Value=BAM \
+           Key=Product,Value=vba-crp-database \
+           Key=vaec:CKID,Value=1702 \
+           Key=vaec:VAECID,Value=AWG20230412001 \
+           Key=vaec:Environment,Value=Development</code></pre>
+</body>
+</html>
