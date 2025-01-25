@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jenkins Post-Failure Email Notification</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1, h2 {
+            color: #2c3e50;
+        }
+        code {
+            background-color: #f4f4f4;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-family: Consolas, monospace;
+            padding: 2px 4px;
+        }
+        pre {
+            background-color: #f4f4f4;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            padding: 10px;
+            overflow-x: auto;
+        }
+        ul {
+            padding-left: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Jenkins Post-Failure Email Notification</h1>
+    
+    <p>This Jenkins pipeline code snippet defines a post-failure action that sends an email notification when a build fails. The code is written in Groovy, which is the scripting language used in Jenkins pipelines.</p>
+
+    <h2>Configuring SMTP for Email Notifications</h2>
+    <p>To enable email notifications in Jenkins, you need to configure the SMTP settings.</p>
+
+    <p>Follow these steps:</p>
+    <ol>
+        <li>Navigate to the Jenkins dashboard.</li>
+        <li>Click on "Manage Jenkins" in the left sidebar.</li>
+        <li>Select "System" from the management options.</li>
+        <li>Scroll down to the "System Admin e-mail address" section and enter the appropriate email address.
+            <ul>
