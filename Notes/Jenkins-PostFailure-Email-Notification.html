@@ -77,7 +77,9 @@
 
     <h2>Stages</h2>
     <p>The pipeline contains a single stage named "Executing Bash":</p>
-    <pre><code>stage('Executing Bash') {
+    <pre><code class="language-bash"> 
+
+stage('Executing Bash') {
     steps {
         script {
             def stageName = env.STAGE_NAME
@@ -92,6 +94,7 @@
         }
     }
 }</code></pre>
+
     <p>This stage performs the following actions:</p>
     <ul>
         <li>Stores the current stage name in a variable.</li>
