@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Conversation</title>
+</head>
+<body>
+    <h1>Conversation opened. 1 read message.</h1>
+    
+    <h2>FW: rebuild Cluster</h2>
+    <p><strong>Inbox</strong></p>
+
+    <p><strong>Injam, Prasad [USA]</strong><br>
+    Attachments<br>
+    Mon, Jan 27, 2:14 PM (2 days ago)<br>
+    to me</p>
+
+    <blockquote>
+        <p>From: Injam, Prasad (Booz Allen Hamilton) &lt;Prasad.Injam@va.gov&gt;<br>
+        Date: Monday, January 27, 2025 at 9:17 AM<br>
+        To: Injam, Prasad [USA] &lt;Injam_Prasad@bah.com&gt;<br>
+        Subject: [External] rebuild Cluster</p>
+
+        <p>Thanks<br>
+        Prasad Injam<br>
+        CRP devOps/DBA<br>
+        Cell. (240). 507. 3893<br>
+        Email: injam_prasad@bah.com<br>
+        VA Email: Prasad.Injam@va.gov<br>
+        Booz | Allen | Hamilton</p>
+    </blockquote>
+
+    <p>Thanks</p>
+
+    <p>Prasad Injam<br>
+    CRP devOps/DBA<br>
+    Cell. (240).507.3893<br>
+    Email: injam_prasad@bah.com<br>
+    VA Email: Prasad.Injam@va.gov<br>
+    Booz | Allen | Hamilton</p>
+
+    <p>One attachment<br>
+    • Scanned by Gmail<br>
+    prasad.injam@va.gov</p>
+
+    <h2>Step 1:</h2>
+    <ol>
+        <li>
+            <pre><code>cd /u01/app/oracle/diag/crs/appdb002
+[root@appdb002.pve appdb002]$  chown -R oracle:oinstall crs</code></pre>
+        </li>
+        <li>
+            <p>Configure the CSS & OHAS services as root user as follows:</p>
+            <pre><code>/u01/app/oracle/product/19.0.0/grid/crs/install/roothas.sh -deconfig -force</code></pre>
+        </li>
+        <li>
+            <pre><code>/u01/app/oracle/product/19.0.0/grid/crs/install/roothas.sh
+/u01/app/oracle/product/19.0.0/grid/root.sh</code></pre>
+        </li>
+        <li>
+            <p>#as grid owner</p>
+            <pre><code>. asm.env
+/u01/app/oracle/product/19.0.0/grid/bin/crsctl modify resource "ora.cssd" -init -attr "AUTO_START=1"  -unsupported</code></pre>
+        </li>
+        <li>
+            <pre><code>crsctl stop has -f
+crsctl start has
+
+crsctl check has
+crsctl stat res -t
+srvctl add listener
+srvctl config listener
+srvctl start listener
+crsctl stat res -t
+srvctl add asm
+srvctl start asm
+
+/u01/app/oracle/product/19.0.0/grid/bin/crsctl modify resource "ora.asm" -init -attr "AUTO_START=1"  -unsupported
+/u01/app/oracle/product/19.0.0/grid/bin/kfod asm_diskstring='/dev/oracleasm/disks/*' disks=all
+sqlplus / as sysasm
+startup</code></pre>
+        </li>
+    </ol>
+
+    <pre><code>set lines 200
+COLUMN MOUNT_STATUS FORMAT A10
+COLUM
