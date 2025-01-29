@@ -3,68 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Email Conversation</title>
+    <title>Oracle Database Configuration Steps</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1, h2 {
+            color: #2c3e50;
+        }
+        pre {
+            background-color: #f4f4f4;
+            border: 1px solid #ddd;
+            border-left: 3px solid #3498db;
+            color: #666;
+            page-break-inside: avoid;
+            font-family: monospace;
+            font-size: 15px;
+            line-height: 1.6;
+            margin-bottom: 1.6em;
+            max-width: 100%;
+            overflow: auto;
+            padding: 1em 1.5em;
+            display: block;
+            word-wrap: break-word;
+        }
+        .step {
+            margin-bottom: 20px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Conversation opened. 1 read message.</h1>
-    
-    <h2>FW: rebuild Cluster</h2>
-    <p><strong>Inbox</strong></p>
+    <h1>Oracle Database Configuration Steps</h1>
 
-    <p><strong>Injam, Prasad [USA]</strong><br>
-    Attachments<br>
-    Mon, Jan 27, 2:14 PM (2 days ago)<br>
-    to me</p>
+    <div class="step">
+        <h2>Step 1: Change Directory and Ownership</h2>
+        <pre>
+cd /u01/app/oracle/diag/crs/appdb002
+chown -R oracle:oinstall crs
+        </pre>
+    </div>
 
-    <blockquote>
-        <p>From: Injam, Prasad (Booz Allen Hamilton) &lt;Prasad.Injam@va.gov&gt;<br>
-        Date: Monday, January 27, 2025 at 9:17 AM<br>
-        To: Injam, Prasad [USA] &lt;Injam_Prasad@bah.com&gt;<br>
-        Subject: [External] rebuild Cluster</p>
+    <div class="step">
+        <h2>Step 2: Configure CSS & OHAS Services</h2>
+        <p>As root user:</p>
+        <pre>
+/u01/app/oracle/product/19.0.0/grid/crs/install/roothas.sh -deconfig -force
+        </pre>
+    </div>
 
-        <p>Thanks<br>
-        Prasad Injam<br>
-        CRP devOps/DBA<br>
-        Cell. (240). 507. 3893<br>
-        Email: injam_prasad@bah.com<br>
-        VA Email: Prasad.Injam@va.gov<br>
-        Booz | Allen | Hamilton</p>
-    </blockquote>
+    <div class="step">
+        <h2>Step 3: Run Installation Scripts</h2>
+        <pre>
+/u01/app/oracle/product/19.0.0/grid/crs/install/roothas.sh
+/u01/app/oracle/product/19.0.0/grid/root.sh
+        </pre>
+    </div>
 
-    <p>Thanks</p>
+    <div class="step">
+        <h2>Step 4: Modify CSSD Resource</h2>
+        <p>As grid owner:</p>
+        <pre>
+. asm.env
+/u01/app/oracle/product/19.0.0/grid/bin/crsctl modify resource "ora.cssd" -init -attr "AUTO_START=1"  -unsupported
+        </pre>
+    </div>
 
-    <p>Prasad Injam<br>
-    CRP devOps/DBA<br>
-    Cell. (240).507.3893<br>
-    Email: injam_prasad@bah.com<br>
-    VA Email: Prasad.Injam@va.gov<br>
-    Booz | Allen | Hamilton</p>
-
-    <p>One attachment<br>
-    • Scanned by Gmail<br>
-    prasad.injam@va.gov</p>
-
-    <h2>Step 1:</h2>
-    <ol>
-        <li>
-            <pre><code>cd /u01/app/oracle/diag/crs/appdb002
-[root@appdb002.pve appdb002]$  chown -R oracle:oinstall crs</code></pre>
-        </li>
-        <li>
-            <p>Configure the CSS & OHAS services as root user as follows:</p>
-            <pre><code>/u01/app/oracle/product/19.0.0/grid/crs/install/roothas.sh -deconfig -force</code></pre>
-        </li>
-        <li>
-            <pre><code>/u01/app/oracle/product/19.0.0/grid/crs/install/roothas.sh
-/u01/app/oracle/product/19.0.0/grid/root.sh</code></pre>
-        </li>
-        <li>
-            <p>#as grid owner</p>
-            <pre><code>. asm.env
-/u01/app/oracle/product/19.0.0/grid/bin/crsctl modify resource "ora.cssd" -init -attr "AUTO_START=1"  -unsupported</code></pre>
-        </li>
-        <li>
-            <pre><code>crsctl stop has -f
+    <div class="step">
+        <h2>Step 5: Restart HAS and Configure Services</h2>
+        <pre>
+crsctl stop has -f
 crsctl start has
 
 crsctl check has
@@ -79,10 +91,58 @@ srvctl start asm
 /u01/app/oracle/product/19.0.0/grid/bin/crsctl modify resource "ora.asm" -init -attr "AUTO_START=1"  -unsupported
 /u01/app/oracle/product/19.0.0/grid/bin/kfod asm_diskstring='/dev/oracleasm/disks/*' disks=all
 sqlplus / as sysasm
-startup</code></pre>
-        </li>
-    </ol>
+startup
 
-    <pre><code>set lines 200
+set lines 200
 COLUMN MOUNT_STATUS FORMAT A10
-COLUM
+COLUMN PATH FORMAT A50
+select disk_number, mount_status, path from v$asm_disk order by 3;
+
+/u01/app/oracle/product/19.0.0/grid/bin/srvctl modify asm -spfile $ORA_CRS_HOME/dbs/spfile+ASM.ora
+/u01/app/oracle/product/19.0.0/grid/bin/srvctl modify asm -l LISTENER
+/u01/app/oracle/product/19.0.0/grid/bin/srvctl modify asm -pwfile $ORA_CRS_HOME/dbs/orapw+ASM
+
+crsctl stop has -f
+crsctl start has
+crsctl stat res -t
+        </pre>
+    </div>
+
+    <div class="step">
+        <h2>Step 6: Configure Database</h2>
+        <pre>
+cd 
+. e1metric.env
+cd $ORACLE_HOME/dbs
+cp initae1metrics.ora inite1metric.ora
+vi inite1metric.ora (change compatible parameter from 11.2.0.4 to 19.0.0)
+
+ifconfig (note IP Address)
+
+sqlplus / as sysdba
+startup
+select status from v$instance;
+sho parameter local_listener;
+
+#ifconfig (get the ip address) on the node
+alter system set local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST=x.x.x.x)(PORT=1521))' ;
+alter system set local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST=x.x.x.x)(PORT=1521))' ;
+
+@?/rdbms/admin/utlrp.sql
+create spfile='?/dbs/spfilee1metric.ora' from pfile;
+
+#Register Database
+srvctl add database -d e1metric -o $ORACLE_HOME
+        </pre>
+    </div>
+
+    <div class="step">
+        <h2>Step 7: Rollback Patch</h2>
+        <p>As root:</p>
+        <pre>
+cd /u01/app/oracle/product/19.0.0/grid/OPatch
+./opatchauto rollback /share/patches/19.0.0/July2021/32841500
+        </pre>
+    </div>
+</body>
+</html>
