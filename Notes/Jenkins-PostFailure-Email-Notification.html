@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jenkins Post-Failure Email Notificatio</title>
+    <style>
+        body {
+            font-family: monospace;
+            background-color: #f0f0f0;
+            padding: 20px;
+        }
+        pre {
+            background-color: #000;
+            color: #00ff00;
+            padding: 20px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Jenkins Post-Failure Email Notification</h1>
+    
+    <p>This Jenkins pipeline code snippet defines a post-failure action that sends an email notification when a build fails. The code is written in Groovy, which is the scripting language used in Jenkins pipelines.</p>
+
+    <h2>Configuring SMTP for Email Notifications</h2>
+    <p>To enable email notifications in Jenkins, you need to configure the SMTP settings.</p>
+
+    <p>Follow these steps:</p>
+    <ol>
+        <li>Navigate to the Jenkins dashboard.</li>
+        <li>Click on "Manage Jenkins" in the left sidebar.</li>
+        <li>Select "System" from the management options.</li>
+        <li>Scroll down to the "System Admin e-mail address" section and enter the appropriate email address.
+            <ul>
+                <li>System Admin e-mail address : Do_Not_Reply@va.gov</li>
+            </ul>
+        </li>
+        <li>Find the "Extended E-mail Notification" section.</li>
+        <li>Configure the following settings:
+            <ul>
+                <li>SMTP server : smtp.va.gov</li>
+                <li>SMTP Port : 25</li>
+            </ul>
+        </li>
+        <li>Save the configuration.</li>
+    </ol>
+    <p>After configuring these settings, Jenkins will be able to send email notifications using the specified SMTP server.</p>
+
+    <h2>Pipeline Structure</h2>
+    <p>The pipeline consists of three main sections:</p>
+    <ol>
+        <li>Environment Variables</li>
+        <li>Stages</li>
+        <li>Post-build Actions</li>
+    </ol>
+
+    <h2>Environment Variables</h2>
+    <pre><code>environment {
+    EMAIL_RECIPIENTS = '******@va.gov'
+}</code></pre>
+    <p>This section defines an environment variable EMAIL_RECIPIENTS with a specific email address. This variable is used later in the post-failure email notification.</p>
+
+    <h2>Stages</h2>
+    <p>The pipeline contains a single stage named "Executing Bash":</p>
+    <pre><code class="language-bash"> 
+
+stage('Executing Bash') {
+    steps {
+        script {
+            def stageName = env.STAGE_NAME
+            try {
+                sh 'test.sh'
+            }
+            catch (e) {
+                echo "An error occurred: ${e}"
+                currentBuild.result = 'FAILURE'
+                env.FAILED_STAGE = stageName
+            }
+        }
+    }
+}</code></pre>
+
+    <p>This stage performs the following actions:</p>
+    <ul>
+        <li>Stores the current stage name in a variable.</li>
+        <li>Attempts to execute a bash script named test.sh.</li>
+        <li>If an error occurs during script execution:
+            <ul>
+                <li>The error message is printed to the console.</li>
+                <li>The build result is set to 'FAILURE'.</li>
+                <li>The name of the failed stage is stored in an environment variable.</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h2>Post-build Actions</h2>
+    <pre><code>post {
+        failure {
+          emailext body: """
+            Job: ${env.JOB_NAME}
+            Build Number: ${env.BUILD_NUMBER}
+            Status: ${currentBuild.currentResult}
+            Failed Stage: ${env.FAILED_STAGE ?: 'Unknown'}            
+            Check console output at: ${env.BUILD_URL}
+            """,
+            subject: "Jenkins: ${env.JOB_NAME} - Build ${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
+                to: "${env.EMAIL_RECIPIENTS}",
+                recipientProviders: [[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider']]
+        }
+    }</code></pre>
+    <p>The post-build section defines actions to be taken after the build completes:</p>
+    <ul>
+        <li>In case of build failure, an email notification is sent.</li>
+        <li>The email includes details such as job name, build number, status, failed stage, and a link to the console output.</li>
+        <li>The email is sent to the address specified in the EMAIL_RECIPIENTS environment variable.</li>
+    </ul>
+
+    <h2>Email Notification Details</h2>
+    <ul>
+        <li>Job Name: Job Name that Failed.</li>
+        <li>Build Number: xx</li>
+        <li>Status: FAILURE</li>
+        <li>Failed Stage: Stage Name where the Pipeline Failed.</li>
+        <li>Console Output URL: [Link to console output]</li>
+    </ul>
+
+    <h2>Key Features</h2>
+    <ul>
+        <li><strong>Error Handling:</strong> The pipeline includes a try-catch block to handle potential errors during bash script execution.</li>
+        <li><strong>Dynamic Content:</strong> Both the email subject and body are dynamically generated using Jenkins environment variables and build information.</li>
+        <li><strong>Conditional Execution:</strong> The email notification is only sent when a build fails.</li>
+        <li><strong>Customizable:</strong> The email content and recipient can be easily modified by changing the environment variables or the email template.</li>
+    </ul>
+
+    <h2>Notes</h2>
+    <p>The code includes recipientProviders configuration. This would automatically add developers and the build requester to the recipient list</p>
+
+    <h3>DevelopersRecipientProvider</h3>
+    <ul>
+        <li><strong>Purpose:</strong> Notifies developers who contributed code changes to the current build.</li>
+        <li><strong>Recipients:</strong> Identifies and includes all committers who have changes in the current build.</li>
+    </ul>
+
+    <h3>RequesterRecipientProvider</h3>
+    <ul>
+        <li><strong>Purpose:</strong> Notifies the person who manually triggered the build.</li>
+        <li><strong>Recipients:</strong> Includes only the user who initiated the build manually</li>
+    </ul>
+</body>
+</html>
