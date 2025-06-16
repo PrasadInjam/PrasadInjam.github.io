@@ -1,0 +1,256 @@
+AWS Backup
+
+Introduction
+The purpose of this documentation is to outline the steps for creating a Cloud Formation template (CFT) in AWS to take a backup of an EBS volume using AWS Backup. This template will also include steps for copying the backup to a different destination and tagging the requested volume.
+
+Steps
+Create a CloudFormation Stack
+AWSTemplateFormatVersion: 2010-09-09
+Description: AWS Backup plan using permissions boundary
+
+Parameters:
+  pKMSKeyId:
+    Description: KMS Key ID for backup vault
+    Type: String
+  pBackupSchedule:
+    Description: Backup schedule
+    Type: String
+    Default: "cron(0 0 ? * * *)"
+  pRetentionPeriod:
+    Description: Retention period in DAYS
+    Type: Number
+    Default: 7
+  pStartWindow:
+    Description: Backup Start Window MINUTES
+    Type: Number
+    Default: 60
+  pTagKey:
+    Description: Tag Key
+    Type: String
+    Default: "EBS-Backup"
+  pTagValue:
+    Description: Tag Value
+    Type: String
+    Default: "Yes"
+
+Resources:
+  rBackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: project-crpdb-EBS-backup-Role
+      Path: /project/
+      PermissionsBoundary: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/vaec/project-admin
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        #- !Ref rRestorePolicy
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+
+  rBackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: !Sub ${AWS::StackName}-vault
+      EncryptionKeyArn: !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:key/${pKMSKeyId}
+
+  rBackupPlan1:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: !Sub ${AWS::StackName}
+        BackupPlanRule:
+          - RuleName: !Sub ${AWS::StackName}
+            TargetBackupVault: !Ref rBackupVault
+            ScheduleExpression: !Ref pBackupSchedule
+            StartWindowMinutes: !Ref pStartWindow
+            Lifecycle:
+              DeleteAfterDays: !Ref pRetentionPeriod
+
+  rBackupPlan1Selection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref rBackupPlan1
+      BackupSelection:
+        SelectionName: TagBasedBackupSelection
+        IamRoleArn: !GetAtt rBackupRole.Arn
+        ListOfTags:
+          - ConditionType: STRINGEQUALS
+            ConditionKey: !Ref pTagKey
+            ConditionValue: !Ref pTagValue
+
+  rRestoreRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: project-crpdb-EBS-backupRestore-Role
+      Path: /project/
+      PermissionsBoundary: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/vaec/project-admin
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref rRestorePolicy
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+
+  rRestorePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: AWS Backup restore policy
+      Path: /project/
+      ManagedPolicyName: project-crpdb-EBS-backup-Policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - iam:CreatePolicy*
+              - iam:DeletePolicy*
+              - iam:DeleteRole
+              - iam:*InstanceProfile
+              - iam:*RolePolicy
+              - iam:PassRole
+              - iam:TagRole
+              - iam:UntagRole
+              - ec2:*
+              - kms:*
+              - elasticfilesystem:*
+              - dynamodb:*
+            Resource: '*'
+  rLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: project-ebs-backup-lambda-role
+      Path: /project/
+      PermissionsBoundary: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/vaec/project-admin
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref rRestorePolicy
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSNSFullAccess
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AWSLambda_FullAccess
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AWSBackupFullAccess
+
+  EBSBackupLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: project-ebs-backup-LambdaFunction
+      Handler: index.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt rLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import logging
+
+          # Initialize logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          # Function to check if 'EBS-Backup' tag is present in the tags list
+          def lambda_handler(event, context):
+          sns = boto3.client('sns')
+          client = boto3.client('backup')
+
+          response = client.list_backup_jobs(
+            ByState='ABORTED' or 'FAILED',
+            ByBackupVaultName='project-EBS-backup-vault'
+          )
+
+          # Adding backup job info string to array
+          ebs_backup_check = []
+          ebs_backup_check.append(response)
+
+          # Setting logger info for sns notifications
+          for ebs_vol in ebs_backup_check:
+            try:
+                logger.info(f"Failed Backup Info: {ebs_vol}")
+                sns.publish(TopicArn='arn:${AWS::Partition}:sns:us-gov-west-1:${AWS::AccountId}:AMIdeletion', Message=f"EBS Backup Failure Info: {str(ebs_vol)}")
+            except Exception as e:
+                logger.error(f"Error processing Backup Failure info - {ebs_vol}: {str(ebs_vol)}")
+
+Execute the CloudFormation Stack
+You can use the AWS Management Console to create a CloudFormation stack with this template.
+
+image
+
+Replicate Backup to Different Destination
+This Step depends on where you want to copy the backup.
+
+From the Backup Plans choose Backup rules and edit it and select the replicate destination.
+
+image
+
+Tagging the Requested Volume
+The template includes a condition in the backup selection that backs up volumes with a custom tag named "EBS-Backup" with the value "Yes". Make sure to tag your EBS volume accordingly.
+
+image
+
+AWS Backup Notifications
+In the event of a failure or aborted backup we will provide a notification email to cloud migration team on the event using cloudwatch, lambda and the simple notification service in aws. This event will be triggered every day at 12 am eastern time and will give a log of failed jobs. All associated steps have been listed in the script above.
+
+Configuration Per Environment
+In regards to configuration for retention period and back schedules per environment the cloudformation template above can be modified to add additional parameters above to add additional rBackupPlan's using parameters.
+
+    
+ Parameters:
+  <>BackupSchedule:
+    Description: Backup schedule
+    Type: String
+    Default: "cron(0 0 ? * * *)"
+  <>RetentionPeriod:
+    Description: Retention period in DAYS
+    Type: Number
+    Default: 30
+  <>StartWindow:
+    Description: Backup Start Window MINUTES
+    Type: Number
+    Default: 60
+  <>TagKey:
+    Description: Tag Key
+    Type: String
+    Default: "EBS-Backup"
+  <>TagValue:
+    Description: Tag Value
+    Type: String
+    Default: "Yes"
+
+
+  rBackupPlan<#>:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: !Sub ${AWS::StackName}
+        BackupPlanRule:
+          - RuleName: !Sub ${AWS::StackName}
+            TargetBackupVault: !Ref rBackupVault
+            ScheduleExpression: !Ref <>BackupSchedule
+            StartWindowMinutes: !Ref <>StartWindow
+            Lifecycle:
+              DeleteAfterDays: !Ref <>RetentionPeriod
+
+  rBackupPlan<#>Selection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref rBackupPlan<#>
+      BackupSelection:
+        SelectionName: TagBasedBackupSelection
+        IamRoleArn: !GetAtt rBackupRole.Arn
+        ListOfTags:
+          - ConditionType: STRINGEQUALS
+            ConditionKey: !Ref <>TagKey
+            ConditionValue: !Ref <>TagValue

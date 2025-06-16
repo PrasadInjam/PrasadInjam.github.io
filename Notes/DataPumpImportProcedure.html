@@ -1,0 +1,306 @@
+Migration of CRP Databases Using DataPump
+
+Table of Contents
+Pre-Checks: Database Checklist
+Section 1: Export from Source Database
+Section 2: Transfer Steps
+Section 3: Pre-Import Steps
+Section 4: Import
+Section 6: Validation After Import
+Section 7: Post Validation
+Section 8: Known Issues
+Export from Source Database
+Below are the steps needed to take export:
+
+Check for and expire any users in rollover state on source DB
+
+SELECT 'ALTER USER ' || USERNAME || ' EXPIRE PASSWORD ROLLOVER PERIOD;' FROM DBA_USERS WHERE ACCOUNT_STATUS LIKE '%ROLLOVER%' ORDER BY USERNAME;  
+Capture SCN from current time to use for export from source database or databases (USE THE SAME TIME FOR ALL DATABASES IN THE SAME ENV)
+
+COL SCN FORMAT 999999999999999999999999
+SELECT TIMESTAMP_TO_SCN(TO_DATE('21-NOV-2023 11:20','DD-MON-YYYY HH24:MI')) AS "SCN" FROM DUAL;  
+Modify the undo retention time for the database during export.
+
+ALTER SYSTEM SET UNDO_RETENTION=21600;
+Run database full export.
+
+PARFILE ENTRIES:
+userid='/ as sysdba'  
+CLUSTER=N  
+EXCLUDE=STATISTICS  
+FULL=Y
+INCLUDE=NETWORK_ACL
+compression=all  
+LOGTIME=ALL  
+METRICS=YES  
+PARALLEL=4  
+DIRECTORY=DBA_EXP_DIR_JOEL
+EXCLUDE=SCHEMA:"IN (SELECT USERNAME FROM DBA_USERS WHERE USERNAME IN ('CRPGGADMIN') OR USERNAME LIKE 'APEX%' OR ORACLE_MAINTAINED = 'Y' OR PROFILE LIKE 'VIEW_PROF_%')"
+LOGFILE=<env>_<YYYYMMDD>.exp.log
+DUMPFILE=<env>_<YYYYMMDD>_%U.dmp
+Note: Take an export of Source database based on SCN.
+
+Source host> expdp parfile=<parfile> flashback_scn=###############
+Export USER schemas [NOT FOR IMPORT].
+
+PARFILE ENTRIES:
+userid='/ as sysdba'
+CLUSTER=N
+EXCLUDE=STATISTICS
+compression=all
+LOGTIME=ALL
+METRICS=YES
+PARALLEL=4
+DIRECTORY=DBA_EXP_DIR_JOEL
+INCLUDE=SCHEMA:"IN (SELECT USERNAME FROM DBA_USERS WHERE USERNAME NOT IN ('CRPGGADMIN') AND USERNAME NOT LIKE 'APEX%' AND ORACLE_MAINTAINED = 'N' AND PROFILE LIKE 'VIEW_PROF_%')"
+LOGFILE=<env>_<YYYYMMDD>.USERS.exp.log
+DUMPFILE=<env>_<YYYYMMDD>.USERS_%U.dmp
+Revert undo retention setting to prior value
+
+ALTER SYSTEM SET UNDO_RETENTION=900;
+Transfer Steps
+PEM File
+The .pem file is the private RSA key in order to scp the files between on-prem and cloud. Find the entry in Secrets Manager associated with the Key pair assigned at launch from the console. Ex.
+
+vi ~/kirk/kirk.pem
+SCP File
+Run the following swapping out the variables in notepad while also ensuring the /file/destination/path destination has 777 permissions.
+
+scp -P 443 -i <~/pem/file/location/.pem> <files> ec2-user@<dest_ip_address>:</file/destination/path> 
+Change File Ownership
+
+cd </file/destination/path>
+sudo chown oracle:oinstall *.dmp *.log
+ 
+
+Pre-Import Steps
+Row counts
+
+Compile COUNT_ROWS function on the source database.
+CREATE OR REPLACE FUNCTION COUNT_ROWS (
+   p_TABLE_NAME IN VARCHAR2,
+   p_OWNER      IN VARCHAR2 DEFAULT NULL,
+   p_EXPORT_SCN IN NUMBER)
+RETURN NUMBER 
+AUTHID CURRENT_USER 
+IS 
+  NUM_ROWS NUMBER; 
+  STMT VARCHAR2(2000); 
+  BEGIN 
+    IF p_OWNER IS NULL THEN 
+      STMT := 'SELECT /*+ PARALLEL(4) */ COUNT(*) FROM "' || p_TABLE_NAME || '" AS OF SCN ' || p_EXPORT_SCN;
+    ELSE
+      STMT := 'SELECT /*+ PARALLEL(4) */ COUNT(*) FROM "' || p_OWNER || '"."' || p_TABLE_NAME || '" AS OF SCN ' || p_EXPORT_SCN;
+    END IF;
+    EXECUTE IMMEDIATE STMT INTO NUM_ROWS;
+    RETURN NUM_ROWS;
+  END; -- FUNCTION COUNT_ROWS
+/
+
+Collect row counts from the source DB AFTER starting export using the export SCN
+SELECT OWNER, TABLE_NAME, COUNT_ROWS(TABLE_NAME,OWNER,##############) ROW_COUNT
+FROM DBA_TABLES
+WHERE OWNER NOT IN (SELECT USERNAME
+                    FROM DBA_USERS
+                    WHERE ORACLE_MAINTAINED='Y'
+                    OR PROFILE IN ('VIEW_PROF_PE')
+                    OR USERNAME LIKE 'APEX%'
+                    OR USERNAME in ('CRPGGADMIN'))
+AND EXTERNAL = 'NO'
+AND (IOT_TYPE IS NULL OR IOT_TYPE != 'IOT_OVERFLOW');
+
+
+Generate script to pre-create tablespaces
+
+SELECT 'CREATE BIGFILE ' || CASE WHEN CONTENTS = 'TEMPORARY' THEN 'TEMPORARY TABLESPACE ' ELSE 'TABLESPACE ' END || DBAT.TABLESPACE_NAME || CHR(13) ||
+       CASE WHEN CONTENTS = 'TEMPORARY' THEN ' TEMPFILE ' ELSE ' DATAFILE ' END || '''+DATA'' SIZE ' || SIZE_MB || 'M AUTOEXTEND ON NEXT ' || SIZE_MB || 'M MAXSIZE UNLIMITED' || CHR(13) ||
+       CASE WHEN CONTENTS = 'TEMPORARY' THEN ' EXTENT MANAGEMENT LOCAL' || CHR(13) ELSE ' LOGGING' || CHR(13) ||
+       ' ONLINE' || CHR(13) ||
+       ' SEGMENT SPACE MANAGEMENT AUTO' || CHR(13) ||
+       ' BLOCKSIZE 8K' || CHR(13) ||
+       ' EXTENT MANAGEMENT LOCAL AUTOALLOCATE' || CHR(13)END ||
+       ' FLASHBACK ON;'
+FROM DBA_TABLESPACES DBAT,
+     (SELECT DT.TABLESPACE_NAME, CASE WHEN USER_BYTES > 102400 THEN 2048 WHEN USER_BYTES > 10240 THEN 1024 ELSE INCREMENT_BY * BLOCK_SIZE END SIZE_MB
+  FROM (SELECT TABLESPACE_NAME, MAX(INCREMENT_BY / 1024 / 1024) INCREMENT_BY, SUM(USER_BYTES / 1024 / 1024) "USER_BYTES" FROM DBA_DATA_FILES GROUP BY TABLESPACE_NAME
+        UNION ALL
+        SELECT TABLESPACE_NAME, MAX(INCREMENT_BY / 1024 / 1024) INCREMENT_BY, SUM(USER_BYTES / 1024 / 1024) "USER_BYTES" FROM DBA_TEMP_FILES GROUP BY TABLESPACE_NAME) DF,
+       DBA_TABLESPACES  DT
+ WHERE     DF.TABLESPACE_NAME = DT.TABLESPACE_NAME) DBAD
+WHERE DBAD.TABLESPACE_NAME = DBAT.TABLESPACE_NAME
+AND   DBAT.TABLESPACE_NAME NOT IN ('SYSTEM','SYSAUX','APEX_5_1','APEX_20_1')
+AND   CONTENTS NOT IN ('UNDO')
+ORDER BY 1;
+
+
+Create password functions
+
+SELECT DBMS_METADATA.GET_DDL('FUNCTION',OBJECT_NAME,'SYS') || CHR(13) || '/'
+FROM DBA_OBJECTS
+WHERE OBJECT_TYPE='FUNCTION'
+AND   OWNER = 'SYS'
+AND   OBJECT_NAME LIKE 'VBA_%'
+UNION ALL
+SELECT TO_CLOB('ALTER FUNCTION SYS.' || OBJECT_NAME || ' COMPILE;')
+FROM DBA_OBJECTS
+WHERE OBJECT_TYPE='FUNCTION'
+AND   OWNER = 'SYS'
+AND   OBJECT_NAME LIKE 'VBA_%';
+
+
+Create profiles
+
+SELECT DBMS_METADATA.GET_DDL('PROFILE', PROFILE) || ';'
+FROM  (SELECT DISTINCT PROFILE
+       FROM   DBA_PROFILES);
+
+
+Default Tablespace
+
+Set existing users’ default tablespace (oracle owned mostly) to default tablespace configured on the source DB and drop existing tablespace if it does not exist on the source DB.
+
+Change default tablespace of existing users (USE SYS)
+SELECT 'ALTER USER ' || USERNAME || ' DEFAULT TABLESPACE USER_1;'
+FROM DBA_USERS
+WHERE DEFAULT_TABLESPACE = 'USERS'
+AND ORACLE_MAINTAINED = 'N'
+ORDER BY USERNAME;
+
+Set default tablespace to match source (USE SYS)
+ALTER DATABASE DEFAULT TABLESPACE USER_1;
+
+Set default temporary tablespace
+ALTER DATABASE DEFAULT TEMPORARY TABLESPACE TEMP_1;
+
+Drop TEMP tablespace
+DROP TABLESPACE TEMP INCLUDING CONTENTS AND DATAFILES;
+
+
+Create Users
+
+SELECT 'CREATE USER ' || A1.NAME || CASE WHEN AUTHENTICATION_TYPE = 'EXTERNAL' THEN ' IDENTIFIED EXTERNALLY ' ELSE ' IDENTIFIED BY VALUES ''' || A1.PASSHASH || '''' END || CHR(10) ||
+       '  DEFAULT TABLESPACE ' || A2.DEFAULT_TABLESPACE || CHR(10) ||
+       '  TEMPORARY TABLESPACE ' || CASE WHEN TEMPORARY_TABLESPACE = 'SYSTEM' THEN 'TEMP_1' ELSE TEMPORARY_TABLESPACE END || CHR(10) ||
+       '  PROFILE ' || PROFILE || CHR(10) ||
+       '  ACCOUNT ' || CASE WHEN ACCOUNT_STATUS IN ('OPEN','EXPIRED') THEN 'UNLOCK' ELSE 'LOCK' END || ';' || CHR(10) ||
+       CASE WHEN ACCOUNT_STATUS LIKE 'EXPIRED%' THEN 'ALTER USER ' || USERNAME || ' PASSWORD EXPIRE;' END || CHR(10)
+FROM (SELECT NAME, SPARE4 || CASE WHEN SPARE4 IS NULL OR "PASSWORD" IS NULL THEN '' ELSE ';' END || "PASSWORD" AS PASSHASH FROM SYS.USER$) A1,
+     DBA_USERS A2
+WHERE A1.NAME = A2.USERNAME
+AND ORACLE_MAINTAINED = 'N'
+AND PROFILE NOT LIKE 'VIEW_PROF_%'
+AND USERNAME NOT LIKE 'APEX%'
+AND USERNAME NOT IN ('CRPGGADMIN')
+ORDER BY A1.NAME;
+
+
+User Specific Grants
+
+GRANT CREATE TABLE TO CORPPROD;
+GRANT CREATE TABLE TO CORPJRN;
+GRANT CREATE MATERIALIZED VIEW TO CORPPROD;
+GRANT CREATE MATERIALIZED VIEW TO CORPJRN;
+
+
+Proxy Grants
+
+SELECT 'ALTER USER ' || CLIENT || ' GRANT CONNECT THROUGH ' || PROXY ||';'
+FROM DBA_PROXIES
+ORDER BY PROXY, CLIENT;
+
+
+Create roles
+
+SELECT 'CREATE ROLE ' || "ROLE" || CASE WHEN PASSWORD_REQUIRED = 'YES' THEN ' IDENTIFIED BY VALUES ''' || PASSHASH || '''' END || ';'
+FROM (SELECT NAME, SPARE4 || CASE WHEN SPARE4 IS NULL OR "PASSWORD" IS NULL THEN '' ELSE ';' END || "PASSWORD" AS PASSHASH FROM SYS.USER$) A1,
+     DBA_ROLES A2
+WHERE A1.NAME = A2.ROLE
+AND ORACLE_MAINTAINED = 'N'
+ORDER BY "ROLE";
+
+Generate grants to create database links
+
+SELECT DISTINCT 'GRANT CREATE DATABASE LINK TO ' || OWNER || ';'
+FROM DBA_DB_LINKS
+WHERE OWNER NOT IN (SELECT GRANTEE
+                    FROM DBA_ROLE_PRIVS
+                    WHERE GRANTED_ROLE = 'DBA')
+AND OWNER NOT IN ('PUBLIC')
+ORDER BY 1;
+
+
+Create CRP,COV,PIE views owned by SYS
+
+SELECT DBMS_METADATA.GET_DDL('VIEW',OBJECT_NAME,'SYS') || ';'
+FROM DBA_OBJECTS
+WHERE OBJECT_TYPE='VIEW'
+AND   (OBJECT_NAME LIKE 'CRP_%'
+OR     OBJECT_NAME LIKE 'PIE_%'
+OR     OBJECT_NAME LIKE 'COV_%')
+AND OWNER = 'SYS'
+ORDER BY OBJECT_NAME;
+
+select 'create or REPLACE PUBLIC SYNONYM ' || OBJECT_NAME ||' FOR '|| OWNER ||'.'|| OBJECT_NAME ||';' 
+from dba_OBJECTS WHERE OBJECT_TYPE='VIEW' AND (OBJECT_name like 'CRP%' 
+OR     OBJECT_NAME LIKE 'PIE_%'
+OR     OBJECT_NAME LIKE 'COV_%')  and owner='SYS' ORDER BY OBJECT_NAME;
+
+select 'GRANT SELECT ON  '|| OWNER ||'.'|| TABLE_NAME ||' TO '||GRANTEE||';' 
+from DBA_TAB_PRIVS WHERE  (TABLE_name like 'CRP%' 
+OR    TABLE_NAME LIKE 'PIE_%'
+OR     TABLE_NAME LIKE 'COV_%')  and owner='SYS' and grantor <> table_name ORDER BY TABLE_NAME;
+
+
+
+Generate script to grant execute on dbms_lock to schemas that contain a procedure or synonym for object “SLEEP”.
+
+SELECT 'GRANT EXECUTE ON SYS.DBMS_LOCK TO ' || OWNER || ';'
+FROM DBA_OBJECTS
+WHERE OBJECT_NAME = 'SLEEP'
+AND OBJECT_TYPE NOT IN ('SYNONYM')
+ORDER BY OBJECT_TYPE, OWNER;
+
+
+Import
+Setup parfile and run import on target server
+
+CORP Parfile Entries:
+DUMPFILE=<env>_<YYYYMMDD>_%U.dmp
+LOGFILE=<env>_<YYYYMMDD>.imp.log
+DIRECTORY=EXPORT_DIR
+FULL=y
+PARALLEL=4
+TRANSFORM=LOB_STORAGE:SECUREFILE
+EXCLUDE=STATISTICS
+EXCLUDE=TABLESPACE,PROFILE,PASSWORD_VERIFY_FUNCTION
+EXCLUDE=SCHEMA:"IN ('APEX_LISTENER','APEX_PUBLIC_USER','APEX_050100','APEX_REST_PUBLIC_USER','APEX_INSTANCE_ADMIN_USER','APEX_200100','SYSTEM','SYS','OUTLN','GGSYS','ANONYMOUS','XS$NULL','ORACLE_OCM','GSMCATUSER','SYSDG','SYSKM','SYS$UMF','SYSBACKUP','DIP','GSMADMIN_INTERNAL','SYSRAC','XDB','AUDSYS','DBSFWUSER','APPQOSSYS','OJVMSYS','DBSNMP','GSMUSER','REMOTE_SCHEDULER_AGENT')"
+BDN Parfile Entries:
+DUMPFILE=<env>_<YYYYMMDD>_%U.dmp
+LOGFILE=<env>_<YYYYMMDD>.imp.log
+DIRECTORY=EXPORT_DIR
+FULL=y
+PARALLEL=4
+EXCLUDE=STATISTICS
+EXCLUDE=TABLESPACE,PROFILE,PASSWORD_VERIFY_FUNCTION
+EXCLUDE=SCHEMA:"IN ('APEX_LISTENER','APEX_PUBLIC_USER','APEX_050100','APEX_REST_PUBLIC_USER','APEX_INSTANCE_ADMIN_USER','APEX_200100','SYSTEM','SYS','OUTLN','GGSYS','ANONYMOUS','XS$NULL','ORACLE_OCM','GSMCATUSER','SYSDG','SYSKM','SYS$UMF','SYSBACKUP','DIP','GSMADMIN_INTERNAL','SYSRAC','XDB','AUDSYS','DBSFWUSER','APPQOSSYS','OJVMSYS','DBSNMP','GSMUSER','REMOTE_SCHEDULER_AGENT')"
+SQL> CREATE RESTORE POINT PRE_IMPORT GUARANTEE FLASHBACK DATABASE;
+
+host> impdp parfile=<parfile>
+
+
+Validation After Import
+Post-Import Validation Procedure
+
+Post Validation
+** Verify redolog configuration matches on-prem or is appropriate
+
+Drop guaranteed restore points (Final Pass ONLY. Retain for First Pass)
+
+Drop any tablespaces that were unable to be dropped due to guaranteed restore points
+
+Update Database Inventory Wiki
+
+Ensure the database was setup with the correct pfile
+
+Ensure the following hidden parameters are set ALTER SYSTEM SET "_disable_directory_link_check"=TRUE SCOPE=spfile; ALTER SYSTEM SET "_kolfuseslf"=TRUE SCOPE=SPFILE;
+

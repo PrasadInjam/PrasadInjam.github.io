@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Standby Database Operations</title>
+</head>
+<body>
+<h1>Standby Database Operations</h1>
+
+<h2>Table of Contents</h2>
+<ul>
+    <li><a href="#prerequisites">Prerequisites</a></li>
+    <li><a href="#primary-setup">1. Primary Database Setup</a></li>
+    <li><a href="#standby-prep">2. Standby Server Preparation</a></li>
+    <li><a href="#stopping-apply">Stopping Apply Process</a></li>
+    <li><a href="#starting-apply">Starting Apply Process</a></li>
+    <li><a href="#show-mrp">Show Managed Recovery Process</a></li>
+    <li><a href="#show-log-gap">Show Log Gap Between Primary and Standby</a></li>
+    <li><a href="#show-online-redo">Show Online Redo Log Information</a></li>
+    <li><a href="#show-standby-redo">Show Standby Redo Log Information</a></li>
+    <li><a href="#configure-dg">Configure Data Guard</a></li>
+    <li><a href="#verify-config">Verify Configuration</a></li>
+    <li><a href="#mrp-process">MRP Process</a></li>
+    <li><a href="#asm-password">ASM Password Setup for OEM</a></li>
+    <li><a href="#hugepages">Configure HugePages</a></li>
+</ul>
+
+<h2 id="prerequisites">Prerequisites</h2>
+<ul>
+    <li>Primary database must be in ARCHIVELOG mode and FORCE LOGGING enabled.</li>
+    <li>Standby redo logs (SRLs) must be created on the primary database.</li>
+</ul>
+
+<h2 id="primary-setup">1. Primary Database Setup</h2>
+<p>Configure initialization parameters on the primary database:</p>
+<pre><code>ALTER SYSTEM SET log_archive_config='dg_config=(PRIMARY_DB,STANDBY_DB)' SCOPE=SPFILE;
+ALTER SYSTEM SET log_archive_dest_1='LOCATION=USE_DB_RECOVERY_FILE_DEST VALID_FOR=(ALL_LOGFILES,ALL_ROLES) DB_UNIQUE_NAME=PRIMARY_DB' SCOPE=SPFILE;
+ALTER SYSTEM SET log_archive_dest_2='SERVICE=STANDBY_DB ASYNC VALID_FOR=(ONLINE_LOGFILES,PRIMARY_ROLE) DB_UNIQUE_NAME=STANDBY_DB' SCOPE=SPFILE;
+ALTER SYSTEM SET standby_file_management=AUTO SCOPE=SPFILE;
+</code></pre>
+
+<h2 id="standby-prep">2. Standby Server Preparation</h2>
+<p>Navigate to the directory where scripts will be stored:</p>
+<pre><code>cd /dbshare/standby_build/&lt;STANDBY_DB&gt;
+</code></pre>
+
+<p>Create the following script files:</p>
+<h3>rman_bdnprdea.sh</h3>
+<pre><code>rman target sys/"********"@"source_host:1527/SID.domain" auxiliary sys/"********"@"targethost.crp.vaec.va.gov:1527/SID.domain" cmdfile=duplicate_database.sql log=duplicate_database.log
+</code></pre>
+<p>Sample:</p>
+<pre><code>rman target sys/""@"vac10dbscrp213.crp.vaec.va.gov:1527/bdnprod.vba.va.gov" auxiliary sys/""@"vac10dbscrp225.crp.vaec.va.gov:1527/bdnprdea.vba.va.gov" cmdfile=duplicate_database.sql log=duplicate_database.log
+</code></pre>
+
+<h3>duplicate_database.sql</h3>
+<pre><code>RUN {
+ALLOCATE CHANNEL d21 TYPE DISK;
+ALLOCATE CHANNEL d22 TYPE DISK;
+...
+ALLOCATE AUXILIARY CHANNEL cnv32 TYPE DISK;
+
+DUPLICATE TARGET DATABASE FOR STANDBY FROM ACTIVE DATABASE DORECOVER NOFILENAMECHECK;
+}
+</code></pre>
+
+<!-- Continue with the rest of the sections in the same format -->
+
+</body>
+</html>
+
