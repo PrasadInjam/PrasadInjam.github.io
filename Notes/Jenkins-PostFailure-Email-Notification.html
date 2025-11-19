@@ -37,13 +37,13 @@
         <li>Select "System" from the management options.</li>
         <li>Scroll down to the "System Admin e-mail address" section and enter the appropriate email address.
             <ul>
-                <li>System Admin e-mail address : Do_Not_Reply@va.gov</li>
+                <li>System Admin e-mail address : Do_Not_Reply@***.gov</li>
             </ul>
         </li>
         <li>Find the "Extended E-mail Notification" section.</li>
         <li>Configure the following settings:
             <ul>
-                <li>SMTP server : smtp.va.gov</li>
+                <li>SMTP server : smtp.***.gov</li>
                 <li>SMTP Port : 25</li>
             </ul>
         </li>
@@ -61,7 +61,7 @@
 
     <h2>Environment Variables</h2>
     <pre><code>environment {
-    EMAIL_RECIPIENTS = '******@va.gov'
+    EMAIL_RECIPIENTS = '******@**.com'
 }</code></pre>
     <p>This section defines an environment variable EMAIL_RECIPIENTS with a specific email address. This variable is used later in the post-failure email notification.</p>
 
